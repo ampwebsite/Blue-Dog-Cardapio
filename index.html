@@ -464,6 +464,10 @@
     opacity: 0.9;
   }
 
+  .cart-btn-finalizar.fechado {
+    background: #f2665a;
+  }
+
   /* ===== HERO (split: imagem + cartão) ===== */
   .hero.section-inner {
     padding-top: 40px;
@@ -561,6 +565,70 @@
     max-width: 320px;
     height: auto;
     display: block;
+  }
+
+  .horario-funcionamento {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-top: -6px;
+  }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--branco);
+    padding: 6px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5fe08a;
+    box-shadow: 0 0 0 3px rgba(95, 224, 138, 0.25);
+    animation: pulseStatus 2s infinite;
+  }
+
+  @keyframes pulseStatus {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+
+  .status.is-closed .dot {
+    background: #f2665a;
+    box-shadow: 0 0 0 3px rgba(242, 102, 90, 0.25);
+  }
+
+  .horario-detalhe {
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.75);
+    text-align: center;
+  }
+
+  .loja-fechada-banner {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    background: #f2665a;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    padding: 10px 16px;
+    line-height: 1.4;
+  }
+
+  .loja-fechada-banner[hidden] {
+    display: none;
   }
 
   .hero-content p {
@@ -1476,6 +1544,10 @@
 </head>
 <body>
 
+  <div class="loja-fechada-banner" id="lojaFechadaBanner" hidden>
+    <span id="lojaFechadaBannerTexto"></span>
+  </div>
+
   <svg width="0" height="0" style="position:absolute">
     <clipPath id="waveClip" clipPathUnits="objectBoundingBox">
       <path d="M0,0 L1,0 L1,0.72
@@ -1587,6 +1659,10 @@
 
       <div class="hero-content">
         <img class="hero-logo" src="assets/imagens/logo.png" alt="Blue Dog Lanches">
+        <div class="horario-funcionamento">
+          <div class="status" id="statusBadge"><span class="dot" id="statusDot"></span> <span id="statusText">Verificando horário...</span></div>
+          <div class="horario-detalhe">Terça a domingo · 19:30 às 00:00<br>Segunda-feira: fechado</div>
+        </div>
       </div>
 
       <div class="hero-image" id="heroSlideshow" role="presentation" aria-label="Vídeo do Blue Dog Lanches">
@@ -1723,14 +1799,26 @@
       cartFlutuanteBadge.textContent = totalItens();
     }
 
+    function atualizarBotaoFinalizar() {
+      const vazio = carrinho.length === 0;
+      cartFinalizar.disabled = vazio;
+      if (!vazio && statusLojaAtual && !statusLojaAtual.aberta) {
+        cartFinalizar.classList.add('fechado');
+        cartFinalizar.textContent = 'Loja fechada no momento';
+      } else {
+        cartFinalizar.classList.remove('fechado');
+        cartFinalizar.textContent = 'Finalizar Compra';
+      }
+    }
+
     function renderizarCarrinho() {
       atualizarBotaoCarrinho();
       cartTotal.textContent = formatarPreco(totalPreco());
 
       const vazio = carrinho.length === 0;
       cartLimpar.disabled = vazio;
-      cartFinalizar.disabled = vazio;
       cartVazio.style.display = vazio ? 'block' : 'none';
+      atualizarBotaoFinalizar();
 
       cartLista.querySelectorAll('.cart-item').forEach(el => el.remove());
 
@@ -1795,8 +1883,110 @@
       renderizarCarrinho();
     });
 
+    // ===== Status "Estamos em funcionamento" / "Estamos fechados" =====
+    // Terça a domingo, das 19:30 às 00:00 (fecha à meia-noite). Segunda fechado.
+    // Horários em minutos desde 00:00 pra facilitar comparação (0 = domingo ... 6 = sábado).
+    const HORARIO_FUNCIONAMENTO = {
+      0: [[1170, 1440]], // domingo 19:30–00:00
+      1: [],              // segunda - fechado
+      2: [[1170, 1440]], // terça
+      3: [[1170, 1440]], // quarta
+      4: [[1170, 1440]], // quinta
+      5: [[1170, 1440]], // sexta
+      6: [[1170, 1440]], // sábado
+    };
+    const NOMES_DIAS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+    function paraHHMM(mins) {
+      const h = Math.floor(mins / 60).toString().padStart(2, '0');
+      const m = (mins % 60).toString().padStart(2, '0');
+      return `${h}:${m}`;
+    }
+
+    // Função central: calcula se a loja está aberta agora e monta as mensagens
+    // usadas tanto no selo do topo, quanto no banner e no bloqueio do carrinho.
+    function obterStatusLoja() {
+      const agora = new Date();
+      const dia = agora.getDay();
+      const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
+      const faixasHoje = HORARIO_FUNCIONAMENTO[dia] || [];
+
+      const faixaAtiva = faixasHoje.find(([inicio, fim]) => minutosAgora >= inicio && minutosAgora < fim);
+
+      if (faixaAtiva) {
+        return {
+          aberta: true,
+          mensagemCurta: `Estamos em funcionamento · Fecha às ${paraHHMM(faixaAtiva[1] % 1440)}`,
+          mensagemAviso: null,
+        };
+      }
+
+      // Procura a próxima abertura: ainda hoje, ou nos próximos dias.
+      let proximaAbertura = null;
+      const proximaHoje = faixasHoje.find(([inicio]) => minutosAgora < inicio);
+      if (proximaHoje) {
+        proximaAbertura = { rotulo: 'hoje', horario: paraHHMM(proximaHoje[0]) };
+      } else {
+        for (let i = 1; i <= 7; i++) {
+          const proximoDia = (dia + i) % 7;
+          const faixas = HORARIO_FUNCIONAMENTO[proximoDia];
+          if (faixas && faixas.length) {
+            const rotulo = i === 1 ? 'amanhã' : NOMES_DIAS[proximoDia];
+            proximaAbertura = { rotulo, horario: paraHHMM(faixas[0][0]) };
+            break;
+          }
+        }
+      }
+
+      const trechoAbertura = proximaAbertura
+        ? (proximaAbertura.rotulo === 'hoje'
+          ? `Abre às ${proximaAbertura.horario}`
+          : `Abre ${proximaAbertura.rotulo} às ${proximaAbertura.horario}`)
+        : 'Confira nossos horários de funcionamento';
+
+      return {
+        aberta: false,
+        mensagemCurta: `Estamos fechados · ${trechoAbertura}`,
+        mensagemAviso: `Estamos fechados no momento. ${trechoAbertura}.`,
+      };
+    }
+
+    let statusLojaAtual = obterStatusLoja();
+
+    function atualizarStatusFuncionamento() {
+      const badge = document.getElementById('statusBadge');
+      const texto = document.getElementById('statusText');
+      const banner = document.getElementById('lojaFechadaBanner');
+      const bannerTexto = document.getElementById('lojaFechadaBannerTexto');
+
+      statusLojaAtual = obterStatusLoja();
+
+      if (badge && texto) {
+        badge.classList.toggle('is-closed', !statusLojaAtual.aberta);
+        texto.textContent = statusLojaAtual.mensagemCurta;
+      }
+
+      if (banner && bannerTexto) {
+        banner.hidden = statusLojaAtual.aberta;
+        if (!statusLojaAtual.aberta) {
+          bannerTexto.textContent = `🔴 ${statusLojaAtual.mensagemAviso} Você pode navegar o cardápio, mas só é possível enviar o pedido durante o funcionamento.`;
+        }
+      }
+
+      if (typeof atualizarBotaoFinalizar === 'function') atualizarBotaoFinalizar();
+    }
+
+    atualizarStatusFuncionamento();
+    setInterval(atualizarStatusFuncionamento, 60000);
+
     cartFinalizar.addEventListener('click', () => {
       if (carrinho.length === 0) return;
+
+      // Não deixa enviar pedido pelo WhatsApp fora do horário de funcionamento.
+      if (!statusLojaAtual.aberta) {
+        alert(`${statusLojaAtual.mensagemAviso}\n\nSeu carrinho continua salvo — é só voltar aqui quando a gente abrir.`);
+        return;
+      }
 
       if (!formaPagamento) {
         cartPagamentoOpcoes.classList.add('erro');
